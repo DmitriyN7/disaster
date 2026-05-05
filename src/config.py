@@ -1,0 +1,3 @@
+LR = 3e-4
+NUM_EPOCHS = 10
+SEED = 7
