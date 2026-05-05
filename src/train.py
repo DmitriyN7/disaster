@@ -7,7 +7,7 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 import torch
 
-from src.config import LR, NUM_EPOCHS, SEED
+from src.config import LR, NUM_EPOCHS, SEED, VAL_STEP
 from src.eda import df_train
 
 
@@ -108,6 +108,8 @@ def run():
 
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     criterion = nn.BCEWithLogitsLoss()
+    best_state_dict = None
+    best_val_f1 = 0.0
 
     for epoch in range(NUM_EPOCHS):
         model.train()
@@ -124,7 +126,32 @@ def run():
 
             total_loss += loss.item()
 
-        print(f"Epoch {epoch + 1}, loss={total_loss:.4f}")
+        if epoch % VAL_STEP == 0:
+            model.eval()
+            epoch_probs = []
+            epoch_targets = []
+
+            with torch.no_grad():
+                for x, offsets, y in val_loader:
+                    logits = model(x, offsets).squeeze(1)
+                    probs = torch.sigmoid(logits)
+                    epoch_probs.extend(probs.numpy())
+                    epoch_targets.extend(y.numpy())
+
+            epoch_preds = [int(prob >= 0.5) for prob in epoch_probs]
+            epoch_f1 = f1_score(epoch_targets, epoch_preds)
+
+            if epoch_f1 > best_val_f1:
+                best_val_f1 = epoch_f1
+                best_state_dict = {
+                    key: value.detach().clone() for key, value in model.state_dict().items()
+                }
+
+            print(f"Epoch {epoch + 1}, loss={total_loss:.4f}, val_f1={epoch_f1:.4f}")
+
+    if best_state_dict is not None:
+        model.load_state_dict(best_state_dict)
+        print(f"Loaded best model with val_f1={best_val_f1:.4f}")
 
     model.eval()
 

@@ -1,13 +1,8 @@
 import string
 
-from sklearn.feature_extraction.text import TfidfVectorizer
-
-
 from wordcloud import STOPWORDS
 import numpy as np
 import pandas as pd
-
-from src.config import SEED
 
 df_train = pd.read_csv("data/train.csv", dtype={"id": np.int16, "target": np.int8})
 df_test = pd.read_csv("data/test.csv", dtype={"id": np.int8})
