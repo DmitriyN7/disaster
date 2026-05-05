@@ -6,7 +6,8 @@ sys.path.append(str(Path(__file__).parent.parent))
 from src.train import run
 
 
-def main():
+def main() -> None:
+    """Run the model training pipeline."""
     run()
 
 

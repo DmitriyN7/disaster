@@ -1,4 +1,5 @@
 from collections import Counter
+from typing import Any
 import re
 
 from sklearn.metrics import classification_report, f1_score, roc_auc_score
@@ -11,7 +12,8 @@ from src.config import LR, NUM_EPOCHS, SEED, VAL_STEP
 from src.eda import df_train
 
 
-def tokenize(text):
+def tokenize(text: str) -> list[str]:
+    """Split text into lowercase word tokens."""
     return re.findall(r"\b\w+\b", text.lower())
 
 
@@ -36,29 +38,35 @@ for word, count in counter.items():
 
 
 class Model(nn.Module):
-    def __init__(self, vocab_size, embed_dim=100):
+    """Simple text classification model with mean pooled embeddings."""
+
+    def __init__(self, vocab_size: int, embed_dim: int = 100) -> None:
         super().__init__()
         self.embedding = nn.EmbeddingBag(vocab_size, embed_dim, mode="mean")
         self.fc = nn.Linear(embed_dim, 1)
 
-    def forward(self, x, offsets):
+    def forward(self, x: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
+        """Return raw logits for each text in the batch."""
         x = self.embedding(x, offsets)
         return self.fc(x)
 
 
 class TextDataset(Dataset):
-    def __init__(self, texts, labels):
+    """Dataset wrapper for text samples and binary labels."""
+
+    def __init__(self, texts: Any, labels: Any) -> None:
         self.texts = texts.reset_index(drop=True)
         self.labels = labels.reset_index(drop=True)
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.texts)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> tuple[str, int]:
         return self.texts[idx], self.labels[idx]
 
 
-def collate_fn(batch):
+def collate_fn(batch: list[tuple[str, int]]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Convert a batch of variable-length texts into tensors for EmbeddingBag."""
     text_list = []
     offsets = [0]
     labels = []
@@ -82,11 +90,13 @@ def collate_fn(batch):
     )
 
 
-def encode(text):
+def encode(text: str) -> list[int]:
+    """Map tokens to vocabulary indices using 0 as unknown token."""
     return [vocab.get(token, 0) for token in tokenize(text)]
 
 
-def run():
+def run() -> None:
+    """Train the model, pick the best checkpoint by validation F1, and report metrics."""
     train_dataset = TextDataset(train_texts, train_labels)
     val_dataset = TextDataset(val_texts, val_labels)
 
