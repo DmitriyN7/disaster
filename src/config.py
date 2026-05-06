@@ -1,4 +1,8 @@
-LR = 3e-4
-NUM_EPOCHS = 20
+MODEL_NAME = "distilbert-base-uncased"
+MAX_LENGTH = 128
+BATCH_SIZE = 16
+LR = 3e-5
+NUM_EPOCHS = 3
 SEED = 7
-VAL_STEP = 5
+VAL_STEP = 1
+WARMUP_RATIO = 0.1

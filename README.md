@@ -1,6 +1,6 @@
 # Disaster Tweets Classification
 
-This project solves a binary tweet classification task: predict whether a tweet reports a real disaster (`target = 1`) or uses disaster-related language figuratively (`target = 0`). The repository includes exploratory data analysis, preprocessing, feature engineering, and a simple PyTorch baseline for the Kaggle **Natural Language Processing with Disaster Tweets** dataset.
+This project solves a binary tweet classification task: predict whether a tweet reports a real disaster (`target = 1`) or uses disaster-related language figuratively (`target = 0`). The repository includes exploratory data analysis, preprocessing, feature engineering, and a PyTorch/transformer training pipeline for the Kaggle **Natural Language Processing with Disaster Tweets** dataset.
 
 ## Key Results
 
@@ -13,9 +13,9 @@ This project solves a binary tweet classification task: predict whether a tweet 
 - train/test missing-value patterns are similar, which suggests the splits are comparable;
 - engineered text meta-features include word count, unique word count, stop-word count, character count, punctuation count, hashtag count, and mention count.
   **Data cleaning:** missing `keyword`/`location` values are filled, unstable characters are removed from categorical fields, and several known contradictory duplicate labels are corrected manually.
-  **Baseline model:** logistic regression with TF-IDF in the notebook achieved mean `F1 ≈ 0.522` on 5-fold cross-validation.
-  **Main model:** a neural text classifier with `EmbeddingBag(mean) + Linear` is trained on tweet text and selects the best checkpoint by validation F1.
-  **Notebook result:** after 5 epochs, the PyTorch model reached `F1 ≈ 0.622`, `ROC-AUC ≈ 0.762`, and accuracy of about `0.71` on the validation split.
+  **Baseline model:** logistic regression with TF-IDF in the notebook achieved mean `F1 ≈ 0.522` on 5-fold cross-validation
+  **Main model:** a BERT-like transformer (`distilbert-base-uncased`) is fine-tuned on tweet text and selects the best checkpoint by validation F1.
+  **Notebook result:** after 5 epochs, the earlier PyTorch `EmbeddingBag` model reached `F1 ≈ 0.622`, `ROC-AUC ≈ 0.762`, and accuracy of about `0.71` on the validation split. The main training script now uses a stronger transformer architecture; rerun it to record local metrics for your hardware and dependency versions.
 
 ## Repository Structure
 
@@ -28,7 +28,7 @@ This project solves a binary tweet classification task: predict whether a tweet 
 ├── src/
 │   ├── config.py              # training hyperparameters
 │   ├── eda.py                 # data loading, cleaning, and feature engineering
-│   ├── train.py               # tokenization, datasets, model, and training loop
+│   ├── train.py               # transformer tokenization, datasets, model, and training loop
 │   └── main.py                # training entry point
 |   └── experiments.ipynb      # experiments
 ├── pyproject.toml             # project dependencies
@@ -83,12 +83,16 @@ The second command temporarily provides Jupyter Lab via `uv --with`. You can als
 
 The main training parameters are defined in `src/config.py`:
 
-| Parameter    |  Value | Description                     |
-| ------------ | -----: | ------------------------------- |
-| `LR`         | `3e-4` | Adam learning rate              |
-| `NUM_EPOCHS` |   `20` | number of training epochs       |
-| `SEED`       |    `7` | random seed used for the split  |
-| `VAL_STEP`   |    `5` | validation evaluation frequency |
+| Parameter      | Value                     | Description                                  |
+| -------------- | ------------------------- | -------------------------------------------- |
+| `MODEL_NAME`   | `distilbert-base-uncased` | pretrained BERT-like model from Hugging Face |
+| `MAX_LENGTH`   | `128`                     | maximum tokenized tweet length               |
+| `BATCH_SIZE`   | `16`                      | training and validation batch size           |
+| `LR`           | `2e-5`                    | AdamW learning rate                          |
+| `NUM_EPOCHS`   | `3`                       | number of fine-tuning epochs                 |
+| `SEED`         | `7`                       | random seed used for the split               |
+| `VAL_STEP`     | `1`                       | validation evaluation frequency              |
+| `WARMUP_RATIO` | `0.1`                     | share of steps used for LR warmup            |
 
 To experiment with these values, edit `src/config.py` and rerun:
 
@@ -100,6 +104,6 @@ uv run python src/main.py
 
 - Generate a `submission.csv` file for the Kaggle test set.
 - Save the best model checkpoint to disk.
-- Try stronger text features: TF-IDF n-grams, pretrained embeddings, or a transformer model.
+- Generate predictions for the Kaggle test set with the fine-tuned transformer.
 - Move preprocessing into pure functions and cover them with tests.
 - Add CLI arguments for data paths, seed, number of epochs, and batch size.
