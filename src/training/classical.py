@@ -206,11 +206,13 @@ def find_best_threshold(
     return best_threshold, best_f1
 
 
-def save_classical_metadata(val_f1: float, threshold: float) -> None:
+def save_classical_metadata(
+    val_f1: float, threshold: float, model_name: str = "tfidf_logistic_regression"
+) -> None:
     """Persist metadata for the fast classical model used to create submission.csv."""
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
     metadata = {
-        "model_name": "tfidf_weighted_probability_ensemble",
+        "model_name": model_name,
         "validation_f1": val_f1,
         "threshold": threshold,
         "seed": SEED,
@@ -221,16 +223,16 @@ def save_classical_metadata(val_f1: float, threshold: float) -> None:
 
 
 def run() -> None:
-    """Train a calibrated TF-IDF model and write a non-degenerate Kaggle submission."""
-    print("Training TF-IDF weighted probability ensemble")
+    """Train the public-score TF-IDF model and write a non-degenerate submission."""
+    print("Training single TF-IDF logistic-regression model")
 
-    train_frame = build_model_frame(df_train.loc[train_texts.index])
-    val_frame = build_model_frame(df_train.loc[val_texts.index])
+    train_features = build_submission_text(df_train.loc[train_texts.index])
+    val_features = build_submission_text(df_train.loc[val_texts.index])
 
-    model = build_tfidf_ensemble_model()
-    model.fit(train_frame, train_labels)
+    model = build_tfidf_logistic_pipeline()
+    model.fit(train_features, train_labels)
 
-    val_probs = model.predict_proba(val_frame)
+    val_probs = model.predict_proba(val_features)[:, 1]
     threshold, tuned_f1 = find_best_threshold(val_probs, val_labels)
     val_preds = [int(prob >= threshold) for prob in val_probs]
 
@@ -239,11 +241,11 @@ def run() -> None:
     print("F1:", tuned_f1)
     print("ROC-AUC:", roc_auc_score(val_labels, val_probs))
 
-    full_model = build_tfidf_ensemble_model()
-    full_features = build_model_frame(df_train)
-    test_features = build_model_frame(df_test)
+    full_model = build_tfidf_logistic_pipeline()
+    full_features = build_submission_text(df_train)
+    test_features = build_submission_text(df_test)
     full_model.fit(full_features, df_train["target"])
-    test_probs = full_model.predict_proba(test_features)
+    test_probs = full_model.predict_proba(test_features)[:, 1]
     submission = create_submission(df_test["id"], test_probs, threshold=threshold)
 
     class_counts = submission["target"].value_counts().to_dict()
