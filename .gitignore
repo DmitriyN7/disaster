@@ -12,3 +12,5 @@ wheels/
 # Training artifacts
 artifacts/
 submission.csv
+
+backup

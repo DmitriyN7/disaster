@@ -2,9 +2,11 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Protocol
 import json
-
 from sklearn.metrics import classification_report, f1_score, roc_auc_score
 from sklearn.model_selection import train_test_split
+from sklearn.pipeline import FeatureUnion, Pipeline
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
@@ -54,22 +56,6 @@ def get_device() -> torch.device:
         return torch.device("mps")
 
     return torch.device("cpu")
-
-
-class TextDataset(Dataset):
-    """Dataset wrapper for text samples, with optional binary labels."""
-
-    def __init__(self, texts: Any, labels: Any | None = None) -> None:
-        self.texts = texts.reset_index(drop=True).astype(str)
-        self.labels = None if labels is None else labels.reset_index(drop=True).astype(int)
-
-    def __len__(self) -> int:
-        return len(self.texts)
-
-    def __getitem__(self, idx: int) -> tuple[str, int] | str:
-        if self.labels is None:
-            return self.texts[idx]
-        return self.texts[idx], int(self.labels[idx])
 
 
 def build_collate_fn(tokenizer: Any):
@@ -173,20 +159,152 @@ def create_submission(
     test_ids: pd.Series,
     probabilities: Iterable[float],
     submission_path=SUBMISSION_PATH,
+    threshold: float = 0.5,
 ) -> pd.DataFrame:
     """Create and save a Kaggle submission dataframe from test probabilities."""
     submission = pd.DataFrame(
         {
             "id": test_ids.astype(int),
-            "target": [int(prob >= 0.5) for prob in probabilities],
+            "target": [int(prob >= threshold) for prob in probabilities],
         }
     )
     submission.to_csv(submission_path, index=False)
     return submission
 
 
+def build_submission_text(df: pd.DataFrame) -> pd.Series:
+    """Combine cleaned metadata and tweet text into one robust linear-model input."""
+    return (
+        df["keyword"].astype(str) + " " + df["location"].astype(str) + " " + df["text"].astype(str)
+    )
+
+
+def build_tfidf_logistic_pipeline() -> Pipeline:
+    """Build a fast TF-IDF logistic-regression model for Kaggle submission files."""
+    features = FeatureUnion(
+        [
+            (
+                "word_tfidf",
+                TfidfVectorizer(
+                    ngram_range=(1, 2),
+                    min_df=2,
+                    max_df=0.95,
+                    strip_accents="unicode",
+                    sublinear_tf=True,
+                ),
+            ),
+            (
+                "char_tfidf",
+                TfidfVectorizer(
+                    analyzer="char_wb",
+                    ngram_range=(3, 5),
+                    min_df=3,
+                    sublinear_tf=True,
+                ),
+            ),
+        ]
+    )
+    classifier = LogisticRegression(
+        C=2.0,
+        class_weight="balanced",
+        max_iter=2000,
+        random_state=SEED,
+        solver="liblinear",
+    )
+    return Pipeline([("features", features), ("classifier", classifier)])
+
+
+def find_best_threshold(
+    probabilities: Iterable[float], targets: Iterable[int]
+) -> tuple[float, float]:
+    """Select the decision threshold with the highest validation F1."""
+    prob_list = list(probabilities)
+    target_list = list(targets)
+    best_threshold = 0.5
+    best_f1 = -1.0
+
+    for threshold_step in range(20, 81):
+        threshold = threshold_step / 100
+        preds = [int(prob >= threshold) for prob in prob_list]
+        score = float(f1_score(target_list, preds))
+        if score > best_f1:
+            best_f1 = score
+            best_threshold = threshold
+
+    return best_threshold, best_f1
+
+
+def save_classical_metadata(val_f1: float, threshold: float) -> None:
+    """Persist metadata for the fast classical model used to create submission.csv."""
+    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    metadata = {
+        "model_name": "tfidf_logistic_regression",
+        "validation_f1": val_f1,
+        "threshold": threshold,
+        "seed": SEED,
+    }
+    (CHECKPOINT_DIR / "training_metadata.json").write_text(
+        json.dumps(metadata, indent=2), encoding="utf-8"
+    )
+
+
 def run() -> None:
+    """Train a calibrated TF-IDF model and write a non-degenerate Kaggle submission."""
+    print("Training fast TF-IDF + logistic-regression model")
+
+    train_frame = df_train.loc[train_texts.index, ["keyword", "location", "text"]].copy()
+    val_frame = df_train.loc[val_texts.index, ["keyword", "location", "text"]].copy()
+    train_features = build_submission_text(train_frame)
+    val_features = build_submission_text(val_frame)
+
+    model = build_tfidf_logistic_pipeline()
+    model.fit(train_features, train_labels)
+
+    val_probs = model.predict_proba(val_features)[:, 1].tolist()
+    threshold, tuned_f1 = find_best_threshold(val_probs, val_labels)
+    val_preds = [int(prob >= threshold) for prob in val_probs]
+
+    print(f"Best validation threshold: {threshold:.2f}")
+    print(classification_report(val_labels, val_preds))
+    print("F1:", tuned_f1)
+    print("ROC-AUC:", roc_auc_score(val_labels, val_probs))
+
+    full_model = build_tfidf_logistic_pipeline()
+    full_features = build_submission_text(df_train)
+    test_features = build_submission_text(df_test)
+    full_model.fit(full_features, df_train["target"])
+    test_probs = full_model.predict_proba(test_features)[:, 1].tolist()
+    submission = create_submission(df_test["id"], test_probs, threshold=threshold)
+
+    class_counts = submission["target"].value_counts().to_dict()
+    if submission["target"].nunique() < 2:
+        raise RuntimeError(
+            "Submission contains a single class; tune features or threshold before submitting."
+        )
+
+    save_classical_metadata(tuned_f1, threshold)
+    print(f"Saved model metadata to {CHECKPOINT_DIR / 'training_metadata.json'}")
+    print(f"Saved Kaggle submission to {SUBMISSION_PATH}; class_counts={class_counts}")
+
+
+def run_transformer() -> None:
     """Fine-tune a BERT-like transformer and report validation metrics."""
+
+    class TextDataset(Dataset):
+        """Dataset wrapper for text samples, with optional binary labels."""
+
+        def __init__(self, texts: Any, labels: Any | None = None) -> None:
+            self.texts = texts.reset_index(drop=True).astype(str)
+            self.labels = None if labels is None else labels.reset_index(drop=True).astype(int)
+
+        def __len__(self) -> int:
+            return len(self.texts)
+
+        def __getitem__(self, idx: int) -> tuple[str, int] | str:
+            if self.labels is None:
+                return self.texts[idx]
+            return self.texts[idx], int(self.labels[idx])
+
     torch.manual_seed(SEED)
     device = get_device()
     print(f"Using device: {device}")
