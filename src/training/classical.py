@@ -1,6 +1,7 @@
 """Classical TF-IDF training pipeline and model builders."""
 
 from collections.abc import Iterable
+from typing import cast
 import json
 
 import pandas as pd
@@ -28,7 +29,7 @@ def build_submission_text(df: pd.DataFrame) -> pd.Series:
 
 def build_model_frame(df: pd.DataFrame) -> pd.DataFrame:
     """Build the dataframe consumed by the ensemble submission model."""
-    model_frame = df[["keyword", "location", "text"]].copy()
+    model_frame = cast(pd.DataFrame, df[["keyword", "location", "text"]].copy())
     model_frame["combined_text"] = build_submission_text(df)
     return model_frame
 
@@ -81,21 +82,35 @@ def build_combined_text_logistic_pipeline(
         [
             (
                 "word_tfidf",
-                TfidfVectorizer(
-                    ngram_range=(1, 2),
-                    min_df=2,
-                    max_df=0.95,
-                    strip_accents="unicode",
-                    sublinear_tf=True,
+                Pipeline(
+                    [
+                        (
+                            "tfidf",
+                            TfidfVectorizer(
+                                ngram_range=(1, 2),
+                                min_df=2,
+                                max_df=0.95,
+                                strip_accents="unicode",
+                                sublinear_tf=True,
+                            ),
+                        )
+                    ]
                 ),
             ),
             (
                 "char_tfidf",
-                TfidfVectorizer(
-                    analyzer="char_wb",
-                    ngram_range=(3, 5),
-                    min_df=3,
-                    sublinear_tf=True,
+                Pipeline(
+                    [
+                        (
+                            "tfidf",
+                            TfidfVectorizer(
+                                analyzer="char_wb",
+                                ngram_range=(3, 5),
+                                min_df=3,
+                                sublinear_tf=True,
+                            ),
+                        )
+                    ]
                 ),
             ),
         ]
@@ -146,7 +161,7 @@ class AveragedProbabilityEnsemble:
         """Fit every base model on its configured feature view."""
         self.fitted_models = []
         for name, model, feature_key, weight in self.models:
-            fitted_model = clone(model)
+            fitted_model = cast(Pipeline, clone(model))
             fitted_model.fit(self._select_features(frame, feature_key), targets)
             self.fitted_models.append((name, fitted_model, feature_key, weight))
         return self
@@ -246,7 +261,7 @@ def run() -> None:
     test_features = build_submission_text(df_test)
     full_model.fit(full_features, df_train["target"])
     test_probs = full_model.predict_proba(test_features)[:, 1]
-    submission = create_submission(df_test["id"], test_probs, threshold=threshold)
+    submission = create_submission(cast(pd.Series, df_test["id"]), test_probs, threshold=threshold)
 
     class_counts = submission["target"].value_counts().to_dict()
     if submission["target"].nunique() < 2:
